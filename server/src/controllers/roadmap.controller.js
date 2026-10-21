@@ -78,41 +78,78 @@ export const generateRoadmap = async (req, res, next) => {
 export const updateItemStatus = async (req, res, next) => {
   try {
     const { phaseIndex, itemIndex, status } = req.body;
-    const roadmap = await Roadmap.findOne({ user: req.user._id });
 
+    const allowedStatuses = ['Not Started', 'In Progress', 'Completed'];
+    if (!status || !allowedStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status: "${status}". Allowed values: ${allowedStatuses.join(', ')}`,
+      });
+    }
+
+    const roadmap = await Roadmap.findOne({ user: req.user._id });
     if (!roadmap) {
       return res.status(404).json({ success: false, message: 'Roadmap not found' });
     }
 
-    if (roadmap.phases[phaseIndex] && roadmap.phases[phaseIndex].items[itemIndex]) {
-      roadmap.phases[phaseIndex].items[itemIndex].status = status;
+    const pIdx = Number(phaseIndex);
+    const iIdx = Number(itemIndex);
 
-      // Recalculate completed milestones count
-      let completed = 0;
-      let total = 0;
-      roadmap.phases.forEach(phase => {
-        let phaseCompletedCount = 0;
-        phase.items.forEach(item => {
-          total++;
-          if (item.status === 'Completed') {
-            completed++;
-            phaseCompletedCount++;
-          }
-        });
-        // Update phase status if all items completed
-        if (phaseCompletedCount === phase.items.length && phase.items.length > 0) {
-          phase.status = 'Completed';
-        } else if (phaseCompletedCount > 0) {
-          phase.status = 'In Progress';
-        } else {
-          phase.status = 'Not Started';
+    if (
+      isNaN(pIdx) ||
+      isNaN(iIdx) ||
+      pIdx < 0 ||
+      iIdx < 0 ||
+      !roadmap.phases ||
+      pIdx >= roadmap.phases.length ||
+      !roadmap.phases[pIdx].items ||
+      iIdx >= roadmap.phases[pIdx].items.length
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid phaseIndex or itemIndex: milestone item does not exist in roadmap',
+      });
+    }
+
+    const targetItem = roadmap.phases[pIdx].items[iIdx];
+    const oldStatus = targetItem.status;
+    targetItem.status = status;
+
+    // Recalculate completed milestones count
+    let completed = 0;
+    let total = 0;
+    roadmap.phases.forEach((phase) => {
+      let phaseCompletedCount = 0;
+      phase.items.forEach((item) => {
+        total++;
+        if (item.status === 'Completed') {
+          completed++;
+          phaseCompletedCount++;
         }
       });
+      // Update phase status if all items completed
+      if (phase.items.length > 0 && phaseCompletedCount === phase.items.length) {
+        phase.status = 'Completed';
+      } else if (phaseCompletedCount > 0) {
+        phase.status = 'In Progress';
+      } else {
+        phase.status = 'Not Started';
+      }
+    });
 
-      roadmap.completedMilestones = completed;
-      roadmap.totalMilestones = total;
+    roadmap.completedMilestones = completed;
+    roadmap.totalMilestones = total;
 
-      await roadmap.save();
+    await roadmap.save();
+
+    // Log activity on new milestone completion
+    if (status === 'Completed' && oldStatus !== 'Completed') {
+      await Activity.create({
+        user: req.user._id,
+        activityType: 'ROADMAP_UPDATED',
+        title: `Milestone Completed: ${targetItem.title}`,
+        description: `Progress updated on ${roadmap.targetRole} roadmap (${completed}/${total} milestones reached).`,
+      });
     }
 
     res.json({
