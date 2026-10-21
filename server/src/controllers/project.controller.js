@@ -2,6 +2,28 @@ import { Project } from '../models/Project.js';
 import { Activity } from '../models/Activity.js';
 import { generateAIResponse } from '../services/ai/ai.service.js';
 
+// URL validation helper (allows empty string or valid http/https URLs)
+export const isValidHttpUrl = (string) => {
+  if (!string || string.trim() === '') return true;
+  try {
+    const url = new URL(string.trim());
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch (_) {
+    return false;
+  }
+};
+
+// Technology parser & normalizer
+export const normalizeTechArray = (technologies) => {
+  if (Array.isArray(technologies)) {
+    return technologies.map(t => String(t).trim()).filter(Boolean);
+  }
+  if (typeof technologies === 'string') {
+    return technologies.split(',').map(t => t.trim()).filter(Boolean);
+  }
+  return [];
+};
+
 export const getProjects = async (req, res, next) => {
   try {
     const projects = await Project.find({ user: req.user._id }).sort({ createdAt: -1 });
@@ -17,21 +39,32 @@ export const getProjects = async (req, res, next) => {
 export const createProject = async (req, res, next) => {
   try {
     const { title, description, technologies, githubUrl, liveUrl, role, status } = req.body;
-    if (!title) {
+    if (!title || !title.trim()) {
       return res.status(400).json({ success: false, message: 'Project title is required' });
     }
 
-    const techArray = Array.isArray(technologies)
-      ? technologies
-      : (technologies || '').split(',').map(t => t.trim()).filter(Boolean);
+    if (githubUrl && !isValidHttpUrl(githubUrl)) {
+      return res.status(400).json({ success: false, message: 'Invalid GitHub URL format. Must start with http:// or https://' });
+    }
+
+    if (liveUrl && !isValidHttpUrl(liveUrl)) {
+      return res.status(400).json({ success: false, message: 'Invalid Live URL format. Must start with http:// or https://' });
+    }
+
+    const allowedStatuses = ['Completed', 'In Progress', 'Planned'];
+    if (status && !allowedStatuses.includes(status)) {
+      return res.status(400).json({ success: false, message: `Invalid status: "${status}". Allowed values: ${allowedStatuses.join(', ')}` });
+    }
+
+    const techArray = normalizeTechArray(technologies);
 
     const project = await Project.create({
       user: req.user._id,
-      title,
-      description,
+      title: title.trim(),
+      description: description || '',
       technologies: techArray,
-      githubUrl,
-      liveUrl,
+      githubUrl: githubUrl ? githubUrl.trim() : '',
+      liveUrl: liveUrl ? liveUrl.trim() : '',
       role: role || 'Sole Developer',
       status: status || 'Completed',
       aiFeedback: {
@@ -45,7 +78,7 @@ export const createProject = async (req, res, next) => {
     await Activity.create({
       user: req.user._id,
       activityType: 'PROJECT_ADDED',
-      title: `Added Project: ${title}`,
+      title: `Added Project: ${title.trim()}`,
       description: `Tech stack: ${techArray.join(', ')}.`,
     });
 
@@ -60,9 +93,47 @@ export const createProject = async (req, res, next) => {
 
 export const updateProject = async (req, res, next) => {
   try {
+    const { title, description, technologies, githubUrl, liveUrl, role, status } = req.body;
+
+    const allowedStatuses = ['Completed', 'In Progress', 'Planned'];
+    if (status !== undefined && !allowedStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status: "${status}". Allowed values: ${allowedStatuses.join(', ')}`,
+      });
+    }
+
+    if (githubUrl !== undefined && !isValidHttpUrl(githubUrl)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid GitHub URL format. Must start with http:// or https://',
+      });
+    }
+
+    if (liveUrl !== undefined && !isValidHttpUrl(liveUrl)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid Live URL format. Must start with http:// or https://',
+      });
+    }
+
+    if (title !== undefined && (!title || !title.trim())) {
+      return res.status(400).json({ success: false, message: 'Project title cannot be empty' });
+    }
+
+    // Whitelist updatable fields to prevent mass assignment
+    const updateFields = {};
+    if (title !== undefined) updateFields.title = title.trim();
+    if (description !== undefined) updateFields.description = description;
+    if (technologies !== undefined) updateFields.technologies = normalizeTechArray(technologies);
+    if (githubUrl !== undefined) updateFields.githubUrl = githubUrl ? githubUrl.trim() : '';
+    if (liveUrl !== undefined) updateFields.liveUrl = liveUrl ? liveUrl.trim() : '';
+    if (role !== undefined) updateFields.role = role;
+    if (status !== undefined) updateFields.status = status;
+
     const project = await Project.findOneAndUpdate(
       { _id: req.params.id, user: req.user._id },
-      req.body,
+      { $set: updateFields },
       { new: true, runValidators: true }
     );
     if (!project) {
