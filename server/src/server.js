@@ -5,6 +5,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { connectDB } from './config/db.js';
 import { errorHandler } from './middleware/error.middleware.js';
+import { securityHeaders } from './middleware/security.middleware.js';
+import { authRateLimiter, aiRateLimiter } from './middleware/rateLimit.middleware.js';
 
 // Route imports
 import authRoutes from './routes/auth.routes.js';
@@ -25,6 +27,9 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
+// Security Headers
+app.use(securityHeaders);
+
 // Middleware
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:5174',
@@ -38,6 +43,13 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Database Connection
 connectDB();
+
+// Tiered Rate Limiting on High-Cost & Sensitive Routes
+app.use('/api/auth/login', authRateLimiter);
+app.use('/api/auth/register', authRateLimiter);
+app.use('/api/chat/message', aiRateLimiter);
+app.use('/api/jobs/match', aiRateLimiter);
+app.use('/api/resume/upload', aiRateLimiter);
 
 // API Routes
 app.use('/api/auth', authRoutes);
