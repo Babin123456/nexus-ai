@@ -59,3 +59,19 @@ export const getJobMatchHistory = async (req, res, next) => {
     next(error);
   }
 };
+
+export const deleteJobMatch = async (req, res, next) => {
+  try {
+    const jobAnalysis = await JobAnalysis.findOneAndDelete({ _id: req.params.id, user: req.user._id });
+    if (!jobAnalysis) {
+      return res.status(404).json({ success: false, message: 'Job analysis record not found' });
+    }
+    res.json({
+      success: true,
+      message: 'Job analysis record removed successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
