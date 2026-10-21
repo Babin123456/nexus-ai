@@ -7,6 +7,7 @@ import { generateAIResponse, fallbackResumeAnalysis } from '../services/ai/ai.se
 import { getResumeAnalysisPrompt } from '../services/ai/prompt.service.js';
 
 export const uploadAndAnalyzeResume = async (req, res, next) => {
+  const tempFilePath = req.file?.path;
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'Please upload a PDF or text resume file' });
@@ -15,11 +16,18 @@ export const uploadAndAnalyzeResume = async (req, res, next) => {
     let extractedText = '';
 
     if (req.file.mimetype === 'application/pdf') {
-      const dataBuffer = fs.readFileSync(req.file.path);
+      const dataBuffer = fs.readFileSync(tempFilePath);
       const parsed = await pdfParse(dataBuffer);
-      extractedText = parsed.text;
+      extractedText = parsed.text || '';
     } else {
-      extractedText = fs.readFileSync(req.file.path, 'utf8');
+      extractedText = fs.readFileSync(tempFilePath, 'utf8') || '';
+    }
+
+    if (!extractedText.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Could not extract text from document. Please ensure your PDF has selectable text and is not an image-only scan.',
+      });
     }
 
     const profile = await Profile.findOne({ user: req.user._id });
@@ -56,19 +64,21 @@ export const uploadAndAnalyzeResume = async (req, res, next) => {
       description: `Resume score: ${resumeDoc.score}/100 with ${resumeDoc.atsCompatibility} ATS rating.`,
     });
 
-    // Cleanup local temp file safely
-    try {
-      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-    } catch (e) {
-      console.warn('Could not delete upload temp file:', e.message);
-    }
-
     res.status(201).json({
       success: true,
       data: resumeDoc,
     });
   } catch (error) {
     next(error);
+  } finally {
+    // Guaranteed local temp file cleanup
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      try {
+        fs.unlinkSync(tempFilePath);
+      } catch (e) {
+        console.warn('Could not delete upload temp file:', e.message);
+      }
+    }
   }
 };
 
@@ -83,3 +93,35 @@ export const getLatestResume = async (req, res, next) => {
     next(error);
   }
 };
+
+export const getResumeHistory = async (req, res, next) => {
+  try {
+    const resumes = await Resume.find({ user: req.user._id })
+      .select('originalFilename score atsCompatibility roleCompatibility createdAt')
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: resumes,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteResume = async (req, res, next) => {
+  try {
+    const resume = await Resume.findOneAndDelete({ _id: req.params.id, user: req.user._id });
+    if (!resume) {
+      return res.status(404).json({ success: false, message: 'Resume analysis not found' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Resume analysis deleted successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
