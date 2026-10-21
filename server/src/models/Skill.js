@@ -25,4 +25,6 @@ const skillSchema = new mongoose.Schema({
   timestamps: true,
 });
 
+skillSchema.index({ user: 1, name: 1 }, { unique: true });
+
 export const Skill = mongoose.model('Skill', skillSchema);

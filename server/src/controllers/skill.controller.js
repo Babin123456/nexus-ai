@@ -14,16 +14,83 @@ export const getSkills = async (req, res, next) => {
   }
 };
 
+// Normalization helper for accurate matching
+export const normalizeSkillToken = (str) => {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .toLowerCase()
+    .trim()
+    .replace(/\.js\b/g, '')
+    .replace(/[\/\-_]/g, ' ')
+    .replace(/\s+/g, ' ');
+};
+
+// Check if a user's skill matches a target requirement without naive substring collision
+export const isSkillMatch = (userSkill, requiredSkill) => {
+  const normUser = normalizeSkillToken(userSkill);
+  const normReq = normalizeSkillToken(requiredSkill);
+
+  if (!normUser || !normReq) return false;
+  if (normUser === normReq) return true;
+
+  // Multi-word permutation match (e.g. "CSS/Tailwind" vs "Tailwind CSS")
+  const sortedUser = normUser.split(' ').filter(Boolean).sort().join(' ');
+  const sortedReq = normReq.split(' ').filter(Boolean).sort().join(' ');
+  if (sortedUser === sortedReq) return true;
+
+  const aliases = {
+    'react': ['reactjs', 'react'],
+    'node': ['nodejs', 'node', 'express'],
+    'js': ['javascript'],
+    'javascript': ['js'],
+    'ts': ['typescript'],
+    'typescript': ['ts'],
+    'py': ['python'],
+    'python': ['py'],
+    'css tailwind': ['tailwind', 'tailwindcss', 'css'],
+    'tailwind': ['css tailwind', 'tailwindcss'],
+    'rest apis': ['rest api', 'restful api', 'api design'],
+    'rest api': ['rest apis', 'restful api', 'api design'],
+    'sql': ['postgresql', 'mysql', 'sqlite', 'sql'],
+    'postgres': ['postgresql', 'sql'],
+    'mongodb': ['mongo', 'nosql'],
+    'ai ml': ['machine learning', 'artificial intelligence', 'deep learning'],
+    'machine learning': ['ml', 'ai ml'],
+    'deep learning': ['dl', 'neural networks'],
+    'system design': ['distributed systems', 'system architecture'],
+  };
+
+  if (aliases[normReq] && aliases[normReq].includes(normUser)) return true;
+  if (aliases[normUser] && aliases[normUser].includes(normReq)) return true;
+
+  return false;
+};
+
 export const addSkill = async (req, res, next) => {
   try {
     const { name, category, proficiency } = req.body;
-    if (!name) {
+    if (!name || !name.trim()) {
       return res.status(400).json({ success: false, message: 'Skill name is required' });
+    }
+
+    const trimmedName = name.trim();
+
+    // Case-insensitive duplicate check for current user
+    const existing = await Skill.findOne({
+      user: req.user._id,
+      name: { $regex: new RegExp(`^${trimmedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+    });
+
+    if (existing) {
+      return res.status(400).json({
+        success: false,
+        message: `Skill "${trimmedName}" is already in your skills inventory`,
+      });
     }
 
     const skill = await Skill.create({
       user: req.user._id,
-      name,
+      name: trimmedName,
       category: category || 'Programming',
       proficiency: proficiency || 'Intermediate',
     });
@@ -31,7 +98,7 @@ export const addSkill = async (req, res, next) => {
     await Activity.create({
       user: req.user._id,
       activityType: 'SKILL_ADDED',
-      title: `Added Skill: ${name}`,
+      title: `Added Skill: ${trimmedName}`,
       description: `Proficiency set to ${proficiency || 'Intermediate'} under ${category || 'Programming'}.`,
     });
 
@@ -53,7 +120,21 @@ export const updateSkill = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Skill not found' });
     }
 
-    if (name) skill.name = name;
+    if (name) {
+      const trimmedName = name.trim();
+      const existing = await Skill.findOne({
+        _id: { $ne: req.params.id },
+        user: req.user._id,
+        name: { $regex: new RegExp(`^${trimmedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+      });
+      if (existing) {
+        return res.status(400).json({
+          success: false,
+          message: `Another skill with name "${trimmedName}" already exists in your inventory`,
+        });
+      }
+      skill.name = trimmedName;
+    }
     if (category) skill.category = category;
     if (proficiency) skill.proficiency = proficiency;
 
@@ -99,13 +180,13 @@ export const getSkillGapAnalysis = async (req, res, next) => {
     };
 
     const required = roleRequirementMap[targetRole] || roleRequirementMap['Software Engineer'];
-    const currentSkillNames = userSkills.map(s => s.name.toLowerCase());
 
     const currentMatched = [];
     const missingHighPriority = [];
 
     required.forEach(reqSkill => {
-      if (currentSkillNames.some(cs => cs.includes(reqSkill.toLowerCase()) || reqSkill.toLowerCase().includes(cs))) {
+      const isMatched = userSkills.some(s => isSkillMatch(s.name, reqSkill));
+      if (isMatched) {
         currentMatched.push(reqSkill);
       } else {
         missingHighPriority.push(reqSkill);
