@@ -27,7 +27,7 @@ export const LandingPage = () => {
 
         <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight text-white leading-tight">
           Your Career. <br />
-          <span className="bg-gradient-to-r from-nexus-400 via-indigo-300 to-purple-400 bg-clip-text text-transparent">
+          <span className="bg-gradient-to-r from-blue-300 via-indigo-400 to-purple-500 bg-clip-text text-transparent">
             Connected by Intelligence.
           </span>
         </h1>
