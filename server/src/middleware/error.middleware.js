@@ -1,5 +1,5 @@
 export const errorHandler = (err, req, res, next) => {
-  let statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+  let statusCode = res.statusCode && res.statusCode !== 200 ? res.statusCode : 500;
   let message = err.message || 'Internal Server Error';
 
   // Handle Mongoose CastError (invalid ObjectId)
@@ -8,14 +8,20 @@ export const errorHandler = (err, req, res, next) => {
     message = `Resource not found with malformed identifier: '${err.value}'`;
   }
 
-  // Handle MongoDB E11000 duplicate key error dynamically
+  // Handle MongoDB E11000 duplicate key error dynamically without leaking sensitive values
   if (err.code === 11000) {
     statusCode = 400;
-    const field = err.keyValue ? Object.keys(err.keyValue)[0] : 'field';
-    const value = err.keyValue ? Object.values(err.keyValue)[0] : '';
-    message = field === 'email'
-      ? 'User already exists with this email address'
-      : `Duplicate value '${value}' entered for ${field}. Please use another value.`;
+    const field = err.keyValue
+      ? Object.keys(err.keyValue)[0]
+      : (err.keyPattern ? Object.keys(err.keyPattern)[0] : null);
+
+    if (field === 'email') {
+      message = 'User already exists with this email address';
+    } else if (field) {
+      message = `Duplicate value entered for ${field}. Please use another value.`;
+    } else {
+      message = 'Duplicate field value entered. Please use another value.';
+    }
   }
 
   // Handle Mongoose validation errors
@@ -24,7 +30,7 @@ export const errorHandler = (err, req, res, next) => {
     message = Object.values(err.errors).map(val => val.message).join(', ');
   }
 
-  // Handle Multer upload errors
+  // Handle Multer upload errors (10MB upload limit configured in upload.middleware.js)
   if (err.name === 'MulterError') {
     statusCode = 400;
     if (err.code === 'LIMIT_FILE_SIZE') {
@@ -50,13 +56,18 @@ export const errorHandler = (err, req, res, next) => {
     message = 'Authentication token has expired. Please log in again.';
   }
 
+  // Consolidated server-side logging for debugging (suppressed in test environment)
   if (process.env.NODE_ENV !== 'test') {
-    console.error(`[API Error] ${req.method} ${req.originalUrl}:`, message);
+    console.error(`[API Error] ${req?.method || 'UNKNOWN'} ${req?.originalUrl || req?.url || ''}:`, err);
   }
+
+  // In production, mask unexpected 500 errors with a safe generic message to avoid disclosing raw internal messages
+  const isProduction = process.env.NODE_ENV === 'production';
+  const clientMessage = isProduction && statusCode === 500 ? 'Internal Server Error' : message;
 
   res.status(statusCode).json({
     success: false,
-    message,
-    stack: process.env.NODE_ENV === 'production' ? null : err.stack,
+    message: clientMessage,
+    stack: isProduction ? null : err.stack,
   });
 };
