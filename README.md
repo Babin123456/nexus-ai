@@ -140,6 +140,9 @@ npm run dev
 
 * Password hashing via bcryptjs with 10 salt rounds.
 * Bearer JWT token header authorization on protected routes.
+* Defensive HTTP security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection`, `Referrer-Policy`, and conditional HTTPS HSTS in production).
+* In-memory sliding-window rate limiting middleware protecting auth endpoints (20 req/15 min) and resource-intensive AI endpoints (15 req/min) against brute force and quota exhaustion.
+  * *Deployment Note*: The in-memory token store operates locally per Node.js process without external infrastructure. For horizontally scaled multi-instance clusters (e.g. Kubernetes, PM2 cluster mode), rate limits apply per container/pod; consider swapping with a centralized Redis store (`rate-limit-redis`) or gateway throttling (Nginx, Cloudflare) for shared distributed quotas.
 * Express error handling returning consistent JSON responses `{ success: false, message: "..." }`.
 * File upload validation restricting extensions to PDF and document text files up to 10MB.
 * Modular AI Service abstraction isolating prompt creation, context aggregation, and LLM inference.
