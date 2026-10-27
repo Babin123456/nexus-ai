@@ -38,7 +38,7 @@ describe('Centralized Error Handling Middleware Tests', () => {
     assert.match(getJson().message, /malformed identifier: 'invalid-mongo-id'/);
   });
 
-  test('maps MongoDB 11000 duplicate key error to 400 with dynamic field name without exposing raw value', () => {
+  test('maps MongoDB 11000 duplicate key error to 409 Conflict with dynamic field name without exposing raw value', () => {
     const { req, res, getStatus, getJson } = createMockReqRes();
     const err = new Error('Duplicate key');
     err.code = 11000;
@@ -46,13 +46,13 @@ describe('Centralized Error Handling Middleware Tests', () => {
 
     errorHandler(err, req, res, () => {});
 
-    assert.equal(getStatus(), 400);
+    assert.equal(getStatus(), 409);
     assert.equal(getJson().success, false);
     assert.equal(getJson().message, 'Duplicate value entered for name. Please use another value.');
     assert.doesNotMatch(getJson().message, /React\.js/, 'Sensitive duplicate value must not be exposed in response');
   });
 
-  test('maps MongoDB 11000 duplicate key on email to user-friendly message', () => {
+  test('maps MongoDB 11000 duplicate key on email to 409 with user-friendly message', () => {
     const { req, res, getStatus, getJson } = createMockReqRes();
     const err = new Error('Duplicate email');
     err.code = 11000;
@@ -60,20 +60,20 @@ describe('Centralized Error Handling Middleware Tests', () => {
 
     errorHandler(err, req, res, () => {});
 
-    assert.equal(getStatus(), 400);
+    assert.equal(getStatus(), 409);
     assert.equal(getJson().success, false);
     assert.equal(getJson().message, 'User already exists with this email address');
     assert.doesNotMatch(getJson().message, /demo@nexusai\.com/, 'Email value must not be leaked');
   });
 
-  test('maps MongoDB 11000 duplicate key fallback when keyValue is missing or uses keyPattern', () => {
+  test('maps MongoDB 11000 duplicate key fallback to 409 when keyValue is missing or uses keyPattern', () => {
     const { req, res, getStatus, getJson } = createMockReqRes();
     const errWithPattern = new Error('Duplicate key with pattern');
     errWithPattern.code = 11000;
     errWithPattern.keyPattern = { username: 1 };
 
     errorHandler(errWithPattern, req, res, () => {});
-    assert.equal(getStatus(), 400);
+    assert.equal(getStatus(), 409);
     assert.equal(getJson().message, 'Duplicate value entered for username. Please use another value.');
 
     const mockFallback = createMockReqRes();
@@ -81,7 +81,7 @@ describe('Centralized Error Handling Middleware Tests', () => {
     errFallback.code = 11000;
 
     errorHandler(errFallback, mockFallback.req, mockFallback.res, () => {});
-    assert.equal(mockFallback.getStatus(), 400);
+    assert.equal(mockFallback.getStatus(), 409);
     assert.equal(mockFallback.getJson().message, 'Duplicate field value entered. Please use another value.');
   });
 
@@ -241,7 +241,7 @@ describe('Centralized Error Handling Middleware Tests', () => {
 
       assert.equal(loggedMessages.length, 1, 'Should log exactly once for development error');
       assert.match(loggedMessages[0][0], /\[API Error\] GET \/api\/test:/);
-      assert.equal(loggedMessages[0][1], devErr, 'Should pass full error object to console.error');
+      assert.equal(loggedMessages[0][1], devErr.stack, 'Should pass sanitized error stack to console.error');
 
       // 2. Verify logging is suppressed in test environment
       loggedMessages.length = 0;
@@ -251,6 +251,32 @@ describe('Centralized Error Handling Middleware Tests', () => {
       errorHandler(testErr, mockTest.req, mockTest.res, () => {});
 
       assert.equal(loggedMessages.length, 0, 'Should not log in test environment');
+    } finally {
+      console.error = originalConsoleError;
+      process.env.NODE_ENV = prevEnv;
+    }
+  });
+
+  test('avoids logging raw request body on JSON SyntaxError to prevent credential leakage in logs', () => {
+    const originalConsoleError = console.error;
+    const loggedMessages = [];
+    console.error = (...args) => {
+      loggedMessages.push(args);
+    };
+
+    const prevEnv = process.env.NODE_ENV;
+    try {
+      process.env.NODE_ENV = 'development';
+      const { req, res } = createMockReqRes();
+      const syntaxErr = new SyntaxError('Unexpected token in JSON at position 10');
+      syntaxErr.status = 400;
+      syntaxErr.body = '{"email":"user@test.com","password":"SensitiveSecretPassword!"}';
+
+      errorHandler(syntaxErr, req, res, () => {});
+
+      assert.equal(loggedMessages.length, 1);
+      const loggedDetails = String(loggedMessages[0][1]);
+      assert.doesNotMatch(loggedDetails, /SensitiveSecretPassword!/, 'Raw rejected body containing credentials must not be logged');
     } finally {
       console.error = originalConsoleError;
       process.env.NODE_ENV = prevEnv;

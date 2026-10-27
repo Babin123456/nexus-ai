@@ -8,9 +8,9 @@ export const errorHandler = (err, req, res, next) => {
     message = `Resource not found with malformed identifier: '${err.value}'`;
   }
 
-  // Handle MongoDB E11000 duplicate key error dynamically without leaking sensitive values
+  // Handle MongoDB E11000 duplicate key error dynamically without leaking sensitive values (HTTP 409 Conflict)
   if (err.code === 11000) {
-    statusCode = 400;
+    statusCode = 409;
     const field = err.keyValue
       ? Object.keys(err.keyValue)[0]
       : (err.keyPattern ? Object.keys(err.keyPattern)[0] : null);
@@ -56,18 +56,20 @@ export const errorHandler = (err, req, res, next) => {
     message = 'Authentication token has expired. Please log in again.';
   }
 
-  // Consolidated server-side logging for debugging (suppressed in test environment)
+  // Consolidated server-side logging for debugging (suppressed in test environment, avoids logging raw request body)
   if (process.env.NODE_ENV !== 'test') {
-    console.error(`[API Error] ${req?.method || 'UNKNOWN'} ${req?.originalUrl || req?.url || ''}:`, err);
+    const errorDetails = err instanceof Error ? (err.stack || err.message) : err;
+    console.error(`[API Error] ${req?.method || 'UNKNOWN'} ${req?.originalUrl || req?.url || ''}:`, errorDetails);
   }
 
   // In production, mask unexpected 500 errors with a safe generic message to avoid disclosing raw internal messages
-  const isProduction = process.env.NODE_ENV === 'production';
-  const clientMessage = isProduction && statusCode === 500 ? 'Internal Server Error' : message;
+  if (process.env.NODE_ENV === 'production' && statusCode === 500) {
+    message = 'Internal Server Error';
+  }
 
   res.status(statusCode).json({
     success: false,
-    message: clientMessage,
-    stack: isProduction ? null : err.stack,
+    message,
+    stack: process.env.NODE_ENV === 'production' ? null : err.stack,
   });
 };
